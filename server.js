@@ -46,28 +46,30 @@ app.get('/api/cards/search', async (req, res) => {
     const apiData = await response.json();
     const rawCards = apiData.data || [];
 
-    // CLEAN DATA: Move image & price to top level
+    // CLEAN DATA: Use card.image if available, fallback to variant
     const cards = rawCards.map(card => {
       const variant = card.variants?.[0] || {};
+      const fallbackImage = card.image || variant.image || null;
+
       return {
         id: card.id,
         name: card.name,
         set_name: card.set_name || card.set,
         set: card.set,
         number: card.number,
-        image: variant.image || null,  // ← NOW IN TOP LEVEL
-        price: variant.price || 0      // ← NOW IN TOP LEVEL
+        image: fallbackImage,  // ← Use card.image or variant.image
+        price: variant.price || 0
       };
     });
 
     res.json({ data: cards });
   } catch (err) {
     console.error('Search error:', err);
-    res.status(500).json({ error: 'Internal server error', message: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// ---------- SINGLE CARD PRICE ----------
+// ---------- SINGLE CARD PRICE + IMAGE ----------
 app.get('/api/cards/price', async (req, res) => {
   try {
     const { id } = req.query;
@@ -85,8 +87,12 @@ app.get('/api/cards/price', async (req, res) => {
 
     const card = await response.json();
     const variant = card.variants?.[0] || {};
-    const price = variant.price || 0;
-    res.json({ price });
+    const image = card.image || variant.image || null;
+
+    res.json({ 
+      price: variant.price || 0,
+      image: image  // ← Return image too
+    });
   } catch (err) {
     console.error('Price error:', err);
     res.status(500).json({ error: 'Failed to fetch price' });
