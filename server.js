@@ -30,10 +30,10 @@ app.get('/api/cards/search', async (req, res) => {
       return res.status(400).json({ error: 'Missing game or q' });
     }
 
-    const url = `${BASE_URL}/cards/search?game=${game}&q=${encodeURIComponent(q)}&limit=${limit}`;
+    const url = `${BASE_URL}/cards?q=${encodeURIComponent(q)}&game=${game}&limit=${limit}`;  // FIXED: /cards + correct params
     const response = await fetch(url, {
       headers: {
-        'X-API-Key': JUSTTCG_API_KEY,        // CORRECT HEADER
+        'X-API-Key': JUSTTCG_API_KEY,
         'Content-Type': 'application/json'
       }
     });
@@ -44,10 +44,10 @@ app.get('/api/cards/search', async (req, res) => {
     }
 
     const data = await response.json();
-    res.json(data);
+    res.json({ data: data.data || [] });  // FIXED: Wrap in {data: [...]}
   } catch (err) {
     console.error('Search error:', err);
-    res.status(500).json({ error: 'Internal server error', message: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
