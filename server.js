@@ -1,10 +1,10 @@
 // server.js - TCG Inventory Tracker Backend
-// Install dependencies: npm install express cors dotenv node-fetch@2
+// npm install express cors dotenv node-fetch@2
 
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -14,141 +14,89 @@ app.use(cors());
 app.use(express.json());
 
 // JustTCG API Configuration
-const JUSTTCG_API_KEY = process.env.JUSTTCG_API_KEY || 'tcg_052679f66e0f462d8f1606ffb601dd72';
+const JUSTTCG_API_KEY = process.env.JUSTTCG_API_KEY; // MUST be set in Render
 const BASE_URL = 'https://api.justtcg.com/v1';
 
-// Health check endpoint
+// ---------- HEALTH CHECK ----------
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'TCG Backend is running' });
 });
 
-// Search cards endpoint
+// ---------- CARD SEARCH ----------
 app.get('/api/cards/search', async (req, res) => {
   try {
     const { game, q, limit = 20 } = req.query;
-
     if (!game || !q) {
-      return res.status(400).json({ 
-        error: 'Missing required parameters: game and q' 
-      });
+      return res.status(400).json({ error: 'Missing game or q' });
     }
 
-    const url = `${BASE_URL}/cards?game=${game}&q=${encodeURIComponent(q)}&limit=${limit}`;
-
+    const url = `${BASE_URL}/cards/search?game=${game}&q=${encodeURIComponent(q)}&limit=${limit}`;
     const response = await fetch(url, {
       headers: {
-        'x-api-key': JUSTTCG_API_KEY,
+        'X-API-Key': JUSTTCG_API_KEY,        // CORRECT HEADER
         'Content-Type': 'application/json'
       }
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      return res.status(response.status).json({ 
-        error: errorData.error || 'JustTCG API error' 
-      });
+      const err = await response.json().catch(() => ({}));
+      return res.status(response.status).json({ error: err.error || 'JustTCG API error' });
     }
 
     const data = await response.json();
     res.json(data);
-
-  } catch (error) {
-    console.error('Search error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: error.message 
-    });
+  } catch (err) {
+    console.error('Search error:', err);
+    res.status(500).json({ error: 'Internal server error', message: err.message });
   }
 });
 
-// Batch card lookup endpoint (for price refresh)
-app.post('/api/cards/batch', async (req, res) => {
+// ---------- SINGLE CARD PRICE ----------
+app.get('/api/cards/price', async (req, res) => {
   try {
-    const { cards } = req.body;
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'Missing id' });
 
-    if (!cards || !Array.isArray(cards)) {
-      return res.status(400).json({ 
-        error: 'Invalid request: cards array required' 
-      });
-    }
-
-    // Limit batch size
-    if (cards.length > 20) {
-      return res.status(400).json({ 
-        error: 'Batch size cannot exceed 20 cards' 
-      });
-    }
-
-    const response = await fetch(`${BASE_URL}/cards`, {
-      method: 'POST',
-      headers: {
-        'x-api-key': JUSTTCG_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(cards)
+    const url = `${BASE_URL}/cards/${id}`;
+    const response = await fetch(url, {
+      headers: { 'X-API-Key': JUSTTCG_API_KEY }
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      return res.status(response.status).json({ 
-        error: errorData.error || 'JustTCG API error' 
-      });
+      const err = await response.json().catch(() => ({}));
+      return res.status(response.status).json({ error: err.error || 'Card not found' });
     }
 
-    const data = await response.json();
-    res.json(data);
-
-  } catch (error) {
-    console.error('Batch lookup error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: error.message 
-    });
+    const card = await response.json();
+    const price = card.prices?.market ?? card.prices?.low ?? 0;
+    res.json({ price });
+  } catch (err) {
+    console.error('Price error:', err);
+    res.status(500).json({ error: 'Failed to fetch price' });
   }
 });
 
-// Get all games
+// ---------- OPTIONAL: LIST GAMES ----------
 app.get('/api/games', async (req, res) => {
   try {
     const response = await fetch(`${BASE_URL}/games`, {
-      headers: {
-        'x-api-key': JUSTTCG_API_KEY
-      }
+      headers: { 'X-API-Key': JUSTTCG_API_KEY }
     });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      return res.status(response.status).json({ 
-        error: errorData.error || 'JustTCG API error' 
-      });
-    }
-
-    const data = await response.json();
+    const data = await response.ok ? await response.json() : { error: 'Failed' };
     res.json(data);
-
-  } catch (error) {
-    console.error('Games error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: error.message 
-    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Error handling middleware
+// ---------- ERROR HANDLER ----------
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({ 
-    error: 'Internal server error',
-    message: err.message 
-  });
+  res.status(500).json({ error: 'Server error' });
 });
 
-// Start server
+// ---------- START SERVER ----------
 app.listen(PORT, () => {
-  console.log(`🚀 TCG Backend Server running on port ${PORT}`);
-  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🔑 Using API Key: ${JUSTTCG_API_KEY.substring(0, 10)}...`);
+  console.log(`TCG Backend running on port ${PORT}`);
+  console.log(`Health → http://localhost:${PORT}/api/health`);
 });
-
-module.exports = app;
