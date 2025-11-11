@@ -14,7 +14,7 @@ app.use(cors());
 app.use(express.json());
 
 // JustTCG API Configuration
-const JUSTTCG_API_KEY = process.env.JUSTTCG_API_KEY; // MUST be set in Render
+const JUSTTCG_API_KEY = process.env.JUSTTCG_API_KEY;
 const BASE_URL = 'https://api.justtcg.com/v1';
 
 // ---------- HEALTH CHECK ----------
@@ -30,7 +30,7 @@ app.get('/api/cards/search', async (req, res) => {
       return res.status(400).json({ error: 'Missing game or q' });
     }
 
-    const url = `${BASE_URL}/cards?q=${encodeURIComponent(q)}&game=${game}&limit=${limit}`;  // FIXED: /cards + correct params
+    const url = `${BASE_URL}/cards?q=${encodeURIComponent(q)}&game=${game}&limit=${limit}`;
     const response = await fetch(url, {
       headers: {
         'X-API-Key': JUSTTCG_API_KEY,
@@ -43,11 +43,27 @@ app.get('/api/cards/search', async (req, res) => {
       return res.status(response.status).json({ error: err.error || 'JustTCG API error' });
     }
 
-    const data = await response.json();
-    res.json({ data: data.data || [] });  // FIXED: Wrap in {data: [...]}
+    const apiData = await response.json();
+    const rawCards = apiData.data || [];
+
+    // CLEAN DATA: Move image & price to top level
+    const cards = rawCards.map(card => {
+      const variant = card.variants?.[0] || {};
+      return {
+        id: card.id,
+        name: card.name,
+        set_name: card.set_name || card.set,
+        set: card.set,
+        number: card.number,
+        image: variant.image || null,  // ← NOW IN TOP LEVEL
+        price: variant.price || 0      // ← NOW IN TOP LEVEL
+      };
+    });
+
+    res.json({ data: cards });
   } catch (err) {
     console.error('Search error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', message: err.message });
   }
 });
 
@@ -68,7 +84,8 @@ app.get('/api/cards/price', async (req, res) => {
     }
 
     const card = await response.json();
-    const price = card.prices?.market ?? card.prices?.low ?? 0;
+    const variant = card.variants?.[0] || {};
+    const price = variant.price || 0;
     res.json({ price });
   } catch (err) {
     console.error('Price error:', err);
