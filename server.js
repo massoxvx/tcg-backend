@@ -87,11 +87,13 @@ app.get('/api/cards/price', async (req, res) => {
 
     const card = await response.json();
     const variant = card.variants?.[0] || {};
+    
+    // USE card.image (main image) — NOT variant.image
     const image = card.image || variant.image || null;
 
     res.json({ 
       price: variant.price || 0,
-      image: image  // ← Return image too
+      image: image  // ← NOW USING card.image
     });
   } catch (err) {
     console.error('Price error:', err);
