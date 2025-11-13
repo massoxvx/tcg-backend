@@ -6,6 +6,8 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 
+const { getImageForCard } = require('./image-providers');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -19,6 +21,19 @@ const BASE_URL = 'https://api.justtcg.com/v1';
 
 // Log presence of the API key (boolean only) - safe for logs
 console.log('JUSTTCG_API_KEY present:', !!JUSTTCG_API_KEY);
+
+// Simple in-memory cache for images (dev-friendly). Consider Redis for production.
+const imageCache = new Map();
+function cacheGet(key) { return imageCache.get(key); }
+function cacheSet(key, value) {
+  if (!key) return;
+  // keep map small in production
+  if (imageCache.size > 2000) {
+    const firstKey = imageCache.keys().next().value;
+    imageCache.delete(firstKey);
+  }
+  imageCache.set(key, value);
+}
 
 // Helper: normalize price from common shapes
 function normalizePrice(price) {
@@ -46,7 +61,6 @@ function normalizePrice(price) {
 // Middleware/helper to ensure API key is configured before calling JustTCG
 function requireJustTcgKey(req, res, next) {
   if (!JUSTTCG_API_KEY) {
-    // Return 500 with a helpful message so client sees configuration issue
     return res.status(500).json({ error: 'JustTCG API key not configured on server (JUSTTCG_API_KEY)' });
   }
   next();
@@ -81,10 +95,21 @@ app.get('/api/cards/search', requireJustTcgKey, async (req, res) => {
     const apiData = await response.json();
     const rawCards = apiData.data || [];
 
-    // CLEAN DATA: Prefer variant.image (more specific) then fallback to card.image
-    const cards = rawCards.map(card => {
+    // CLEAN DATA: Prefer variant.image (more specific) then fallback to card.image, otherwise try external providers
+    const cards = await Promise.all(rawCards.map(async card => {
       const variant = card.variants?.[0] || {};
-      const image = variant.image || card.image || null;
+      // try cached image first
+      const cacheKey = `img:${card.id}`;
+      let image = cacheGet(cacheKey) ?? (variant.image || card.image || null);
+
+      if (!image) {
+        // try external providers (Pokemon, Magic)
+        const providerImage = await getImageForCard(card);
+        if (providerImage) {
+          image = providerImage;
+          cacheSet(cacheKey, image);
+        }
+      }
 
       const priceInfo = normalizePrice(variant.price ?? variant.prices ?? card.price ?? card.prices);
 
@@ -99,7 +124,7 @@ app.get('/api/cards/search', requireJustTcgKey, async (req, res) => {
         currency: priceInfo.currency,
         variant_id: variant.id ?? null
       };
-    });
+    }));
 
     res.json({ data: cards });
   } catch (err) {
@@ -128,7 +153,16 @@ app.get('/api/cards/price', requireJustTcgKey, async (req, res) => {
     const variant = card.variants?.[0] || {};
 
     // Prefer variant image first (variant images are usually SKU-specific), then card.image
-    const image = variant.image || card.image || null;
+    const cacheKey = `img:${card.id}`;
+    let image = cacheGet(cacheKey) ?? (variant.image || card.image || null);
+
+    if (!image) {
+      const providerImage = await getImageForCard(card);
+      if (providerImage) {
+        image = providerImage;
+        cacheSet(cacheKey, image);
+      }
+    }
 
     // Normalize price from several possible shapes
     const priceInfo = normalizePrice(variant.price ?? variant.prices ?? card.price ?? card.prices);
@@ -139,7 +173,6 @@ app.get('/api/cards/price', requireJustTcgKey, async (req, res) => {
       currency: priceInfo.currency,
       image: image,
       variant_id: variant.id ?? null,
-      // raw debug is optional — remove or set via env in production
       raw: process.env.SHOW_RAW === 'true' ? { card, variant } : undefined
     });
   } catch (err) {
